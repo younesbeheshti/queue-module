@@ -15,7 +15,7 @@
 
 #include "shared_memory.h"
 
-#define QUEUE_DEVICE "/dev/myQueue"
+#define QUEUE_DEVICE "/dev/charQueue"
 #define SHARED_BUFFER_SIZE 1024
 
 int shared_mem_id;

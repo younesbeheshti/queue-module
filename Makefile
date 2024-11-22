@@ -14,7 +14,7 @@ user:
 	$(CC) main.c shared_memory.c -lm -o user
 
 permission:
-	chmod 777 /dev/queue_module
+	chmod 777 /dev/charQueue
 
 install:
 	insmod queue_module.ko blocking=$(BLOCKING)
