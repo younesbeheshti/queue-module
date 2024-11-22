@@ -11,10 +11,10 @@ clean:
 	rm user
 
 user:
-	$(CC) main.c shmutil.c -lm -o user
+	$(CC) main.c shared_memory.c -lm -o user
 
 permission:
-	chmod 777 /dev/myQueue
+	chmod 777 /dev/queue_module
 
 install:
 	insmod queue_module.ko blocking=$(BLOCKING)
