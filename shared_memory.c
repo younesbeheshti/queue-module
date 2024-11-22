@@ -1,90 +1,54 @@
-#include <fcntl.h>
-#include<stdio.h>
-#include<sys/ipc.h>
-#include<sys/shm.h>
-#include<sys/types.h>
-#include<string.h>
-#include<stdlib.h>
-#include <sys/wait.h>
-#include<unistd.h>
-#include<string.h>
+#include <sys/shm.h>
+#include <string.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include "shared_memory.h"
 
-#include "shmutil.h"
+#define SHM_KEY 0x2345
 
-#define SHM_KEY 0x1234
+typedef struct {
+    int dataSize;
+    int isReady;
+    char buffer[SHARED_BUFFER_SIZE];
+} SharedMemory;
 
-struct shmseg {
-   int cnt;
-   int complete;
-   char buf[BUF_SIZE];
-};
-
-int create_shm(){
-    int shmid;
-    struct shmseg *shmp;
-    shmid = shmget(SHM_KEY, sizeof(struct shmseg), 0644|IPC_CREAT);
+int initializeSharedMemory() {
+    int shmid = shmget(SHM_KEY, sizeof(SharedMemory), 0644 | IPC_CREAT);
     if (shmid == -1) {
-        perror("Shared memory");
+        perror("Failed to create shared memory");
         return -1;
     }
-
     return shmid;
 }
 
-int remove_shm(int shmid){
-    if (shmctl(shmid, IPC_RMID, 0) == -1) {
-        perror("shmctl");
-        return 1;
+int cleanUpSharedMemory(int shmid) {
+    return shmctl(shmid, IPC_RMID, NULL);
+}
+
+int storeDataToMemory(int shmid, char *data) {
+    SharedMemory *sharedMem = shmat(shmid, NULL, 0);
+    if (sharedMem == (void *)-1) {
+        perror("Shared memory attachment failed");
+        return -1;
     }
+    strcpy(sharedMem->buffer, data);
+    sharedMem->dataSize = strlen(data);
+    sharedMem->isReady = 1;
+    shmdt(sharedMem);
     return 0;
 }
 
-int write_data(int shmid, char *data){
-    // Attach SHM
-    struct shmseg *shmp;
-    shmp = shmat(shmid, NULL, 0);
-    if (shmp == (void *) -1) {
-        perror("Shared memory attach");
-        return 1;
-    }
-    char *bufptr;
-    bufptr = shmp->buf;
-    shmp->complete = 0;
-    memcpy(bufptr, data, strlen(data));
-    shmp->cnt = strlen(data);
-    wait(NULL);
-    shmp->complete = 1;
-
-    // Detach SHM
-    if (shmdt(shmp) == -1) {
-        perror("shmdt");
-        return 1;
-    }
-    printf("Writing Process: Complete\n");
-    return 0;
-}
-
-int read_data(char *data, int shmid){
-    // Attach SHM
-    struct shmseg *shmp;
-    shmp = shmat(shmid, NULL, 0);
-    if (shmp == (void *) -1) {
-        perror("Shared memory attach\n");
+int fetchDataFromMemory(char *data, int shmid) {
+    SharedMemory *sharedMem = shmat(shmid, NULL, 0);
+    if (sharedMem == (void *)-1) {
+        perror("Shared memory attachment failed");
         return -1;
     }
-    char *bufptr;
-    bufptr = shmp->buf;
-    if(shmp->complete != 1)
-        return -1;
-
-    memcpy(data, shmp->buf, shmp->cnt);
-    data[shmp->cnt] = '\0';
-
-    // Detach SHM
-    if (shmdt(shmp) == -1) {
-        perror("shmdt");
-        return -1;
+    if (sharedMem->isReady) {
+        strcpy(data, sharedMem->buffer);
+        shmdt(sharedMem);
+        return 0;
     }
-    printf("Reading Process: Complete\n");
-    return 0;
+    shmdt(sharedMem);
+    return -1;
 }
