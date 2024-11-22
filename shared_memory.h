@@ -1,5 +1,6 @@
-#define BUF_SIZE 1024
-int create_shm();
-int remove_shm(int shmid);
-int write_data(int shmid, char *data);
-int read_data(char *data, int shmid);
+#define SHARED_BUFFER_SIZE 1024
+
+int initializeSharedMemory();
+int cleanUpSharedMemory(int shmid);
+int storeDataToMemory(int shmid, char *data);
+int fetchDataFromMemory(char *data, int shmid);
