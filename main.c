@@ -51,7 +51,6 @@ long int epoch_millis()
 int main()
 {
     int parent = getpid();
-    pid_t children[3];
     long int *arr;
 
     
@@ -89,12 +88,11 @@ int main()
 
     // Wait for two child processes to finish
     int status;
-    waitpid(children[0], &status, 0);
-    printf("p1: %ld\n", epoch_millis());
     arr = (long int *)shmat(times_shmid, NULL, 0);
-    printf("p2: %ld\n", arr[1]);
 
-    printf("wait time for process 1: %f\n", (double) (epoch_millis() - arr[1]) / 1000);
+    waitpid(arr[0], &status, 0);
+
+    printf("wait time for process 1: %dms\n", (epoch_millis() - arr[1]));
 
     shmid = create_shm();
     fork();
@@ -116,15 +114,15 @@ int main()
     }
     int donepid = wait(NULL);
     if (donepid == arr[2])
-        printf("wait time for process 2: %f\n", (double) (epoch_millis() - arr[3]) / 1000);
+        printf("wait time for process 2: %dms\n", (epoch_millis() - arr[3]));
     else 
-        printf("wait time for process 3: %f\n", (double) (epoch_millis() - arr[5]) / 1000);
+        printf("wait time for process 3: %dms\n", (epoch_millis() - arr[5]));
 
     donepid = wait(NULL);
     if (donepid == arr[2])
-        printf("wait time for process 2: %f\n", (double) (epoch_millis() - arr[3]) / 1000);
+        printf("wait time for process 2: %dms\n", (epoch_millis() - arr[3]));
     else
-        printf("wait time for process 3: %f\n", (double) (epoch_millis() - arr[5]) / 1000);
+        printf("wait time for process 3: %dms\n", (epoch_millis() - arr[5]));
 
     // for (int i=0; i<6; i++) {
     //     printf("data %d = %ld\n", i, arr[i]);
