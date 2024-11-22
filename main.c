@@ -4,7 +4,7 @@
 #include <stdio.h>
 #include <netinet/in.h>
 #include <stdlib.h>
-#include<sys/shm.h>
+#include <sys/shm.h>
 #include <sys/wait.h>
 #include <sys/socket.h>
 #include <time.h>
@@ -13,250 +13,193 @@
 #include <fcntl.h>
 #include <string.h>
 
-// #include "parent.h"
-#include "shmutil.h"
+#include "shared_memory.h"
 
-#define BUFFERSIZE 1024
-#define DEVICE "/dev/myQueue"
+#define QUEUE_DEVICE "/dev/myQueue"
+#define SHARED_BUFFER_SIZE 1024
 
-int shmid;
+int shared_mem_id;
 
-void writeToQueue(char *data);
+// Function declarations
+void serverProcess();
+void clientProcess();
+int queueHandler();
+void writeToDevice(char *data);
+double getCurrentEpoch();
+long int getEpochMillis();
+void signalHandler(int signal);
 
-void process1();
-void process2();
-int process3();
+int activeFlag = 1;
+char bufferData[SHARED_BUFFER_SIZE];
 
+int main() {
+    pid_t parent_pid = getpid();
+    long int *timestamps;
+    int shm_key = ftok(".", 34);
+    int shm_time_id = shmget(shm_key, sizeof(long int) * 6, 0666 | IPC_CREAT);
 
-double epoch_double(struct timespec *tv)
-{
-    clock_gettime(CLOCK_REALTIME, tv);
-    char time_str[32];
-
-    sprintf(time_str, "%ld.%.9ld", tv->tv_sec, tv->tv_nsec);
-
-    return atof(time_str);
-}
-
-long int epoch_millis()
-{
-    double epoch;
-    struct timespec tv;
-    epoch = epoch_double(&tv);
-    epoch = round(epoch*1e3);
-
-    return (long int) epoch;
-}
-
-int main()
-{
-    int parent = getpid();
-    long int *arr;
-
-    
-    static long int start[3];
-    int key = ftok(".", 34);
-
-    int times_shmid = shmget(key,sizeof(long int)*6,0666|IPC_CREAT);
-
-
-    struct timespec tv;
     fork();
-
-    
-    if (getpid() != parent){
-        process1();
-        arr = (long int *)shmat(times_shmid, NULL, 0);
-        arr[0] = getpid();
-        arr[1] = epoch_millis();
-        shmdt((void *) arr);
-
-        // printf("p2: %ld\n", start[0]);
-        exit(0);
-    }
-    fork();
-    
-    int pid = getpid();
-    if (pid != parent){
-        process2();
-        arr = (long int *)shmat(times_shmid, NULL, 0);
-        arr[2] = getpid();
-        arr[3] = epoch_millis();
-        shmdt((void *) arr);
+    if (getpid() != parent_pid) {
+        // First child process
+        serverProcess();
+        timestamps = (long int *)shmat(shm_time_id, NULL, 0);
+        timestamps[0] = getpid();
+        timestamps[1] = getEpochMillis();
+        shmdt((void *)timestamps);
         exit(0);
     }
 
-    // Wait for two child processes to finish
+    fork();
+    if (getpid() != parent_pid) {
+        // Second child process
+        clientProcess();
+        timestamps = (long int *)shmat(shm_time_id, NULL, 0);
+        timestamps[2] = getpid();
+        timestamps[3] = getEpochMillis();
+        shmdt((void *)timestamps);
+        exit(0);
+    }
+
     int status;
-    arr = (long int *)shmat(times_shmid, NULL, 0);
+    timestamps = (long int *)shmat(shm_time_id, NULL, 0);
 
-    waitpid(arr[0], &status, 0);
+    waitpid(timestamps[0], &status, 0);
+    printf("Server process wait time: %ld ms\n", getEpochMillis() - timestamps[1]);
 
-    printf("wait time for process 1: %dms\n", (epoch_millis() - arr[1]));
-
-    shmid = create_shm();
+    shared_mem_id = initializeSharedMemory();
     fork();
-    pid = getpid();
-    if(pid != parent){
-        int success = process3();
-
-        arr = (long int *)shmat(times_shmid, NULL, 0);
-        arr[4] = getpid();
-        arr[5] = epoch_millis();
-        shmdt((void *) arr);
-        if(success == 0){
-            printf("Process 3 has completed successfully\n");
+    if (getpid() != parent_pid) {
+        // Third child process
+        int queueSuccess = queueHandler();
+        timestamps = (long int *)shmat(shm_time_id, NULL, 0);
+        timestamps[4] = getpid();
+        timestamps[5] = getEpochMillis();
+        shmdt((void *)timestamps);
+        if (queueSuccess == 0) {
+            printf("Queue handler completed successfully.\n");
             exit(0);
         } else {
-            perror("Process 3 has failed!\n");
+            perror("Queue handler failed!\n");
             exit(1);
         }
     }
-    int donepid = wait(NULL);
-    if (donepid == arr[2])
-        printf("wait time for process 2: %dms\n", (epoch_millis() - arr[3]));
-    else 
-        printf("wait time for process 3: %dms\n", (epoch_millis() - arr[5]));
 
-    donepid = wait(NULL);
-    if (donepid == arr[2])
-        printf("wait time for process 2: %dms\n", (epoch_millis() - arr[3]));
-    else
-        printf("wait time for process 3: %dms\n", (epoch_millis() - arr[5]));
-
-    // for (int i=0; i<6; i++) {
-    //     printf("data %d = %ld\n", i, arr[i]);
-    // 
-    // }
-    shmdt((void *) arr);
-    shmctl(times_shmid, IPC_RMID, NULL);
-
-    char data[BUF_SIZE];
-    read_data(data, shmid);
-    printf("Read \"%s\" from shared memory(SHM)\n", data);
-
-    remove_shm(shmid);
-}
-
-int active = 1;
-char data[BUF_SIZE];
-
-void handle_sigint(int sig){
-    printf("data to write: %s\n", data);
-    write_data(shmid, data);
-    active = 0;
-}
-
-int process3(){
-    signal(SIGINT, handle_sigint);
-    int fd;
-    fd = open(DEVICE, O_RDWR); 
-
-    int success;
-
-    int i = 0;
-    while(active){
-        success = read(fd, data+i, 1);
-        if(success < 1)
-            break;
-        i++;
+    for (int i = 0; i < 2; ++i) {
+        int completed_pid = wait(NULL);
+        if (completed_pid == timestamps[2]) {
+            printf("Client process wait time: %ld ms\n", getEpochMillis() - timestamps[3]);
+        } else {
+            printf("Queue handler wait time: %ld ms\n", getEpochMillis() - timestamps[5]);
+        }
     }
 
-    printf("read '%s' from queue\n", data);
+    char readData[SHARED_BUFFER_SIZE];
+    fetchDataFromMemory(readData, shared_mem_id);
+    printf("Data from shared memory: \"%s\"\n", readData);
 
-    write_data(shmid, data);
+    cleanUpSharedMemory(shared_mem_id);
+    shmctl(shm_time_id, IPC_RMID, NULL);
     return 0;
 }
 
-void process2(){
- 
-    int server_fd, new_socket;
-    struct sockaddr_in address;
-
-    int opt = 1;
-    int addrlen = sizeof(address);
-
-    if ((server_fd = socket(AF_INET, SOCK_STREAM, 0)) == 0) {
-        perror("socket failed");
-        exit(EXIT_FAILURE);
-    }
-
-    address.sin_family = AF_INET;
-    address.sin_port = htons(54321);
-
-    if (inet_pton(AF_INET, "127.0.0.1", &address.sin_addr) <= 0) {
-        printf("\nInvalid address/ Address not supported \n");
-        exit(EXIT_FAILURE);
-    }
-
-
-    if (connect(server_fd, (struct sockaddr *)&address, sizeof(address)) < 0) {
-        printf("\nConnection Failed \n");
-        exit(EXIT_FAILURE);
-    }
-
-    printf("receiving data\n");
-    char buffer[BUFFERSIZE] = {0};
-    read(server_fd, buffer, BUFFERSIZE);
-    printf("received data: %s\n", buffer);
-    writeToQueue(buffer);
+double getCurrentEpoch() {
+    struct timespec timeSpec;
+    clock_gettime(CLOCK_REALTIME, &timeSpec);
+    return timeSpec.tv_sec + timeSpec.tv_nsec * 1e-9;
 }
 
-
-void process1(){
-    char line[1024];
-    int c = 0;
-
-    int server_fd, new_socket;
-    struct sockaddr_in address;
-
-    int opt = 1;
-    int addrlen = sizeof(address);
-
-    if ((server_fd = socket(AF_INET, SOCK_STREAM, 0)) == 0) {
-        perror("socket failed");
-        exit(EXIT_FAILURE);
-    }
-
-    if (setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR | SO_REUSEPORT, &opt, sizeof(opt))) {
-        perror("setsockopt");
-        exit(EXIT_FAILURE);
-    }
-
-    address.sin_family = AF_INET;
-    address.sin_addr.s_addr = INADDR_ANY;
-    address.sin_port = htons(54321);
-
-    if (bind(server_fd, (struct sockaddr *)&address, sizeof(address)) < 0) {
-        perror("bind failed");
-        exit(EXIT_FAILURE);
-    }
-    if (listen(server_fd, 3) < 0) {
-        perror("listen");
-        exit(EXIT_FAILURE);
-    }
-
-    scanf("%1023[^\n]", line);
-    addrlen = sizeof(address);
-
-    printf("accepting new connections\n");
-    new_socket = accept(server_fd, (struct sockaddr*)&address, &addrlen);
-    send(new_socket, line, strlen(line), 0);
+long int getEpochMillis() {
+    return (long int)(round(getCurrentEpoch() * 1000));
 }
 
-void writeToQueue(char *data){
-    int fd;
-    fd = open(DEVICE, O_RDWR); 
-    int success;
-    int count = strlen(data);
-    for(int i=0; i<count; i++){
-        success = write(fd, data, 1);
-        // printf("data: %s\tstrlen: %ld\tsuccess: %d\n", data, strlen(data), success);
-        if(success < 0){
-            printf("Failed like a dog!\n");
+void serverProcess() {
+    char inputData[1024];
+    int socket_fd, new_client_fd;
+    struct sockaddr_in server_addr;
+
+    if ((socket_fd = socket(AF_INET, SOCK_STREAM, 0)) == 0) {
+        perror("Socket creation failed.");
+        exit(EXIT_FAILURE);
+    }
+
+    server_addr.sin_family = AF_INET;
+    server_addr.sin_addr.s_addr = INADDR_ANY;
+    server_addr.sin_port = htons(54321);
+
+    if (bind(socket_fd, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0) {
+        perror("Socket bind failed.");
+        exit(EXIT_FAILURE);
+    }
+
+    if (listen(socket_fd, 3) < 0) {
+        perror("Listening on socket failed.");
+        exit(EXIT_FAILURE);
+    }
+
+    printf("Enter message to send: ");
+    fgets(inputData, sizeof(inputData), stdin);
+
+    socklen_t addr_len = sizeof(server_addr);
+    new_client_fd = accept(socket_fd, (struct sockaddr *)&server_addr, &addr_len);
+    send(new_client_fd, inputData, strlen(inputData), 0);
+}
+
+void clientProcess() {
+    int socket_fd;
+    struct sockaddr_in server_addr;
+
+    if ((socket_fd = socket(AF_INET, SOCK_STREAM, 0)) == 0) {
+        perror("Socket creation failed.");
+        exit(EXIT_FAILURE);
+    }
+
+    server_addr.sin_family = AF_INET;
+    server_addr.sin_port = htons(54321);
+    if (inet_pton(AF_INET, "127.0.0.1", &server_addr.sin_addr) <= 0) {
+        printf("Invalid address or unsupported address.\n");
+        exit(EXIT_FAILURE);
+    }
+
+    if (connect(socket_fd, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0) {
+        printf("Connection to server failed.\n");
+        exit(EXIT_FAILURE);
+    }
+
+    char response[SHARED_BUFFER_SIZE] = {0};
+    read(socket_fd, response, SHARED_BUFFER_SIZE);
+    printf("Received from server: %s\n", response);
+    writeToDevice(response);
+}
+
+void signalHandler(int signal) {
+    printf("Captured data: %s\n", bufferData);
+    storeDataToMemory(shared_mem_id, bufferData);
+    activeFlag = 0;
+}
+
+int queueHandler() {
+    signal(SIGINT, signalHandler);
+    int queue_fd = open(QUEUE_DEVICE, O_RDWR);
+    int readSuccess;
+
+    int index = 0;
+    while (activeFlag) {
+        readSuccess = read(queue_fd, bufferData + index, 1);
+        if (readSuccess < 1) break;
+        index++;
+    }
+
+    printf("Queue read: %s\n", bufferData);
+    storeDataToMemory(shared_mem_id, bufferData);
+    return 0;
+}
+
+void writeToDevice(char *data) {
+    int device_fd = open(QUEUE_DEVICE, O_RDWR);
+    for (size_t i = 0; i < strlen(data); i++) {
+        if (write(device_fd, &data[i], 1) < 0) {
+            printf("Write failed.\n");
             break;
         }
-        if(success != 0)
-            data++;
     }
 }
