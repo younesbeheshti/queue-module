@@ -20,7 +20,6 @@
 
 int shared_mem_id;
 
-// Function declarations
 void serverProcess();
 void clientProcess();
 int queueHandler();
@@ -40,7 +39,6 @@ int main() {
 
     fork();
     if (getpid() != parent_pid) {
-        // First child process
         serverProcess();
         timestamps = (long int *)shmat(shm_time_id, NULL, 0);
         timestamps[0] = getpid();
@@ -51,7 +49,6 @@ int main() {
 
     fork();
     if (getpid() != parent_pid) {
-        // Second child process
         clientProcess();
         timestamps = (long int *)shmat(shm_time_id, NULL, 0);
         timestamps[2] = getpid();
@@ -69,7 +66,6 @@ int main() {
     shared_mem_id = initializeSharedMemory();
     fork();
     if (getpid() != parent_pid) {
-        // Third child process
         int queueSuccess = queueHandler();
         timestamps = (long int *)shmat(shm_time_id, NULL, 0);
         timestamps[4] = getpid();
@@ -121,10 +117,16 @@ void serverProcess() {
         perror("Socket creation failed.");
         exit(EXIT_FAILURE);
     }
+    int opt = 1;
+    if (setsockopt(socket_fd, SOL_SOCKET, SO_REUSEADDR | SO_REUSEPORT, &opt, sizeof(opt))) {
+        perror("setsockopt");
+        exit(EXIT_FAILURE);
+    }
+
 
     server_addr.sin_family = AF_INET;
     server_addr.sin_addr.s_addr = INADDR_ANY;
-    server_addr.sin_port = htons(54321);
+    server_addr.sin_port = htons(54322);
 
     if (bind(socket_fd, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0) {
         perror("Socket bind failed.");
@@ -154,7 +156,7 @@ void clientProcess() {
     }
 
     server_addr.sin_family = AF_INET;
-    server_addr.sin_port = htons(54321);
+    server_addr.sin_port = htons(54322);
     if (inet_pton(AF_INET, "127.0.0.1", &server_addr.sin_addr) <= 0) {
         printf("Invalid address or unsupported address.\n");
         exit(EXIT_FAILURE);

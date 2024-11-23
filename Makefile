@@ -17,6 +17,6 @@ permission:
 	chmod 777 /dev/charQueue
 
 install:
-	insmod queue_module.ko blocking=$(BLOCKING)
+	insmod queue_module.ko enableBlocking=$(BLOCKING)
 uninstall:
 	rmmod queue_module

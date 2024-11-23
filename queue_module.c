@@ -27,7 +27,6 @@ static DECLARE_WAIT_QUEUE_HEAD(writeWaitQueue);
 static struct class *queueClass = NULL;
 static struct device *queueDevice = NULL;
 
-// Function prototypes
 static int queue_open(struct inode *, struct file *);
 static int queue_release(struct inode *, struct file *);
 static ssize_t queue_read(struct file *, char *, size_t, loff_t *);
@@ -40,11 +39,9 @@ static struct file_operations fops = {
     .release = queue_release,
 };
 
-// Initialize the module
 static int __init queue_init(void) {
     printk(KERN_INFO "charQueue: Initializing the driver\n");
 
-    // Register the character device
     driverMajor = register_chrdev(0, DRIVER_NAME, &fops);
     if (driverMajor < 0) {
         printk(KERN_ERR "charQueue: Failed to register a major number\n");
@@ -52,7 +49,6 @@ static int __init queue_init(void) {
     }
     printk(KERN_INFO "charQueue: Registered with major number %d\n", driverMajor);
 
-    // Create device class
     queueClass = class_create(THIS_MODULE, DRIVER_CLASS);
     if (IS_ERR(queueClass)) {
         unregister_chrdev(driverMajor, DRIVER_NAME);
@@ -61,7 +57,6 @@ static int __init queue_init(void) {
     }
     printk(KERN_INFO "charQueue: Device class registered successfully\n");
 
-    // Create the device
     queueDevice = device_create(queueClass, NULL, MKDEV(driverMajor, 0), NULL, DRIVER_NAME);
     if (IS_ERR(queueDevice)) {
         class_destroy(queueClass);
@@ -74,7 +69,6 @@ static int __init queue_init(void) {
     return 0;
 }
 
-// Cleanup the module
 static void __exit queue_exit(void) {
     device_destroy(queueClass, MKDEV(driverMajor, 0));
     class_destroy(queueClass);
@@ -82,37 +76,32 @@ static void __exit queue_exit(void) {
     printk(KERN_INFO "charQueue: Exiting the module\n");
 }
 
-// Open device file
 static int queue_open(struct inode *inodep, struct file *filep) {
     printk(KERN_INFO "charQueue: Device opened\n");
     return 0;
 }
 
-// Release device file
 static int queue_release(struct inode *inodep, struct file *filep) {
     printk(KERN_INFO "charQueue: Device closed\n");
     return 0;
 }
 
-// Read from the queue
 static ssize_t queue_read(struct file *filep, char *buffer, size_t len, loff_t *offset) {
     int err, bytesToRead = 1;
 
-    // Wait if the queue is empty and blocking is enabled
     if (queueSize == 0) {
         if (enableBlocking) {
-            wait_event_interruptible(readWaitQueue, queueSize > 0);
+            wait_event_interruptible_timeout(readWaitQueue, queueSize > 0, msecs_to_jiffies(10000));
+            if (queueSize == 0)
+                return 0;
         } else {
-            return 0; // Non-blocking mode
-        }
+            return 0;        }
     }
 
-    // Read one character
     char data = messageQueue[headIndex];
     headIndex = (headIndex + 1) % QUEUE_CAPACITY;
     queueSize--;
 
-    // Copy data to user space
     err = copy_to_user(buffer, &data, bytesToRead);
     if (err == 0) {
         printk(KERN_INFO "charQueue: Read %d byte(s)\n", bytesToRead);
@@ -124,20 +113,18 @@ static ssize_t queue_read(struct file *filep, char *buffer, size_t len, loff_t *
     }
 }
 
-// Write to the queue
 static ssize_t queue_write(struct file *filep, const char *buffer, size_t len, loff_t *offset) {
     int err, bytesToWrite = 1;
 
-    // Wait if the queue is full and blocking is enabled
     if (queueSize == QUEUE_CAPACITY) {
         if (enableBlocking) {
-            wait_event_interruptible(writeWaitQueue, queueSize < QUEUE_CAPACITY);
+            wait_event_interruptible_timeout(writeWaitQueue, queueSize < QUEUE_CAPACITY, msecs_to_jiffies(10000));
+            if (queueSize == QUEUE_CAPACITY)
+                return -ETIMEDOUT;
         } else {
-            return 0; // Non-blocking mode
-        }
+            return 0;        }
     }
 
-    // Write one character
     char data;
     err = copy_from_user(&data, buffer, bytesToWrite);
     if (err == 0) {
